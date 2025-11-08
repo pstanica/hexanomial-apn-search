@@ -1,0 +1,385 @@
+// FILE: test_ccz_standalone.magma
+//
+// Standalone CCZ-Equivalence Testing - No external dependencies
+// Includes only the functions we need from cryptocriteria1.txt
+//
+
+System("clear");
+clear;
+
+// ============================================================================
+// CCZ-EQUIVALENCE FUNCTIONS (from cryptocriteria1.txt)
+// ============================================================================
+
+// Differential Spectrum
+function DDT_a(polyF, a)
+    Fn := BaseRing(Parent(polyF));
+    return [Evaluate(polyF, x+a)-Evaluate(polyF, x) : x in Fn];
+end function;
+
+function DiffSpec(polyF, aSet)
+    Fn := BaseRing(Parent(polyF));
+    q := #Fn;
+    DSpec := {* *};
+    for a in aSet do 
+        seq := Multiplicities(SequenceToMultiset(DDT_a(polyF, a)));
+        cnt := q - #seq;
+        DSpec := DSpec join SequenceToMultiset(seq) join {* 0^^cnt *};
+    end for;
+    return DSpec, Max(MultisetToSet(DSpec));
+end function;
+
+// Gamma-rank
+function gammaRank(polyF)
+    Fn := BaseRing(Parent(polyF));
+    n := 2*Degree(Fn);
+    M := ZeroMatrix(GF(2), 2^n, 2^n);
+    W := VectorSpace(GF(2), n);
+
+    Gf := {W!(Eltseq(v) cat Eltseq(Evaluate(polyF,v))): v in Fn};
+    for w in W do
+        ww := [Integers()!w[i]:i in [1..n]];
+        j := SequenceToInteger(ww,2)+1;
+        GFtilde := {r+w:r in Gf};
+        for v in GFtilde do
+            vv := [Integers()!v[i]:i in [1..n]];
+            i := SequenceToInteger(vv,2)+1;
+            M[i][j] := 1;
+        end for;
+    end for;
+    return Rank(M);
+end function;
+
+// ANF (needed for deltaRank)
+function ANF(f)
+    R<z> := Parent(f);
+    K<w> := BaseRing(R);
+    n := Degree(K);
+    V := VectorSpace(GF(2), n);
+    
+    function invcorrisp(v)
+        return K!(&+[v[i+1]*w^i : i in [0..n-1]]);
+    end function;
+    
+    I := Matrix(GF(2), 2^n, n, []);
+    V1 := [i : i in V];
+    K1 := [i : i in K];
+    
+    for k in [1..2^n] do
+        z := invcorrisp(V1[k]);
+        for i in [1..2^n] do
+            if Evaluate(f,z) eq invcorrisp(V1[i]) then
+                I[k] := V1[i];
+                break;
+            end if; 
+        end for; 
+    end for;
+    
+    B := Matrix(GF(2), 2^n, 2^n, []);
+    P<[x]> := PolynomialRing(GF(2), n);
+    M := [&*[x[i]^(Integers()!a[i]) : i in [1..n]] : a in V];
+    
+    for i in [1..2^n] do
+        for j in [1..2^n] do
+            B[i, j] := Evaluate(M[j], Eltseq(V1[i]));
+        end for; 
+    end for;
+    
+    S := Solution(Transpose(B), Transpose(I));
+    pN := [];
+    
+    for j in [1..n] do
+        pn := 0;
+        for i in [1..2^n] do
+            pn := M[i]*S[j][i]+pn;
+        end for;
+        pN := Append(pN, pn);
+    end for;
+    
+    return pN;
+end function;
+
+// Delta-rank
+function deltaRank(polyF)
+    Fn := BaseRing(Parent(polyF));
+    n := Degree(Fn);
+    Gt<[E]> := FreeAbelianGroup(2*n);
+    G<[E]>  := AbelianGroup(quo<Gt|{2*e = 0 : e in E}>);
+    A1 := GroupAlgebra(ComplexField(), G : Rep:="Vector"); 
+    A := GroupAlgebra(GF(2), G : Rep:="Vector");
+    
+    rr1 := func< v | &+[E[i]*(Integers()!v[i]): i in [1..n]]>;
+    rr2 := func< v | &+[E[i+n]*(Integers()!v[i]): i in [1..n]]>;
+    FF  := ANF(polyF);
+    Gf := [rr1(v)+rr2([Evaluate(FF[i],[v[j]:j in [1..n]]) : i in [1..n]]) : v in VectorSpace(GF(2),n)];
+
+    Gf := &+[A1!g : g in Gf];
+    Df := Gf*Gf - elt< A1 | 2^n, 0 >;
+    Df := 2^(-1)*Df;
+    DDf := [];
+    V := VectorSpace(GF(2),2*n);
+    
+    for v in V do
+        j := (&+[Integers()!v[i]*E[i]:i in [1..2*n]]);
+        if Coefficient(Df,j) eq 1 then 
+            Append(~DDf,G!(&+[Integers()!v[i]*E[i]:i in [1..2*n]])); 
+        end if;
+    end for;
+    
+    if #DDf gt 0 then
+        DDf := &+[A!g : g in DDf];
+    end if;
+    
+    J := ideal<A|DDf>;
+    DeltaRank := Dimension(J);
+    
+    return DeltaRank; 
+end function;
+
+// Linear code for CCZ-equivalence test
+function LinearCodeFromFunction(polyF)
+    Fn<w> := BaseRing(Parent(polyF)); 
+    Fp := PrimeField(Fn);
+    p  := #Fp; n := Degree(Fn); q := #Fn;
+    M := Matrix(Fp, 2*n+1, q, 
+                [1: x in Fn] 
+            cat [Trace(w^i * x): x in Fn, i in [0..n-1]] 
+            cat [Trace(w^i * Evaluate(polyF, x)): x in Fn, i in [0..n-1]]
+            );
+    return LinearCode(M);
+end function;
+
+// CCZ-equivalence test
+function IsCCZEquivalent(polyF1, polyF2)
+    Fn := BaseRing(Parent(polyF1)); 
+    Fp := PrimeField(Fn);
+    p  := #Fp;
+    
+    if p ne 2 then
+        printf "\nError! IsCCZEquivalent only works for Boolean functions!\n\n";
+        return false;
+    end if;
+    
+    q := #Fn; w := PrimitiveElement(Fn);
+    n := Degree(Fn, Fp);
+    
+    if gammaRank(polyF1) ne gammaRank(polyF2) then
+        return false;
+    elif deltaRank(polyF1) ne deltaRank(polyF2) then
+        return false;
+    else
+        Code1 := LinearCodeFromFunction(polyF1);
+        Code2 := LinearCodeFromFunction(polyF2);
+        res, map := IsIsomorphic(Code1, Code2);
+        return res;
+    end if; 
+end function;
+
+// ============================================================================
+// PARSER
+// ============================================================================
+
+function ParseLineSimple(line, Fn)
+    a := Fn.1;
+    
+    if Position(line, "|") eq 0 then
+        return false, _, _, _, _, _;
+    end if;
+    
+    parts := Split(line, "|");
+    coeffs_str := parts[1];
+    coeffs := Split(coeffs_str, ",");
+    
+    if #coeffs ne 5 then
+        return false, _, _, _, _, _;
+    end if;
+    
+    try
+        A_str := StripWhiteSpace(coeffs[1]);
+        B_str := StripWhiteSpace(coeffs[2]);
+        C_str := StripWhiteSpace(coeffs[3]);
+        D_str := StripWhiteSpace(coeffs[4]);
+        E_str := StripWhiteSpace(coeffs[5]);
+        
+        A := (A_str eq "0") select Fn!0 else ((A_str eq "1") select Fn!1 else eval A_str);
+        B := (B_str eq "0") select Fn!0 else ((B_str eq "1") select Fn!1 else eval B_str);
+        C := (C_str eq "0") select Fn!0 else ((C_str eq "1") select Fn!1 else eval C_str);
+        D := (D_str eq "0") select Fn!0 else ((D_str eq "1") select Fn!1 else eval D_str);
+        E := (E_str eq "0") select Fn!0 else ((E_str eq "1") select Fn!1 else eval E_str);
+        
+        return true, A, B, C, D, E;
+    catch e
+        return false, _, _, _, _, _;
+    end try;
+end function;
+
+function ReadAPNFile(filename, Fn)
+    functions := [];
+    
+    try
+        file := Open(filename, "r");
+        
+        while true do
+            line := Gets(file);
+            if IsEof(line) then break; end if;
+            if #line eq 0 or line[1] eq "#" then continue; end if;
+            
+            success, A, B, C, D, E := ParseLineSimple(line, Fn);
+            if success then
+                Append(~functions, <A, B, C, D, E>);
+            end if;
+        end while;
+        
+        delete file;
+    catch e
+        printf "Error reading %o\n", filename;
+        return [];
+    end try;
+    
+    return functions;
+end function;
+
+// ============================================================================
+// BUILD HEXANOMIAL
+// ============================================================================
+
+function BuildPoly(A, B, C, D, E, Fn, q)
+    R<x> := PolynomialRing(Fn);
+    return A*x^3 + B*x^(q+1) + C*x^(2*q+1) + D*x^(q+2) + E*x^(2*q+2) + x^(3*q);
+end function;
+
+// ============================================================================
+// CLASSIFICATION
+// ============================================================================
+
+procedure ClassifyField(n, infile, outfile)
+    printf "\n========================================================================\n";
+    printf "CCZ-EQUIVALENCE: n=%o (F_%o)\n", n, 2^(2*n);
+    printf "========================================================================\n";
+    
+    q := 2^n;
+    Fn<a> := FiniteField(q^2);
+    
+    printf "Reading: %o\n", infile;
+    functions := ReadAPNFile(infile, Fn);
+    printf "Loaded: %o functions\n\n", #functions;
+    
+    if #functions eq 0 then
+        printf "ERROR: No functions found!\n";
+        return;
+    end if;
+    
+    polys := [BuildPoly(f[1], f[2], f[3], f[4], f[5], Fn, q) : f in functions];
+    
+    printf "Computing invariants for %o functions...\n", #polys;
+    invariants := [];
+    
+    for i := 1 to #polys do
+        if i mod 100 eq 1 or i le 10 then
+            printf "  %o/%o\n", i, #polys;
+        end if;
+        
+        grank := gammaRank(polys[i]);
+        
+        drank := -1;
+        if q le 8 then
+            try
+                drank := deltaRank(polys[i]);
+            catch e
+                drank := -1;
+            end try;
+        end if;
+        
+        mulFn := [a^j : j in [0..q^2-2]];
+        dspec, du := DiffSpec(polys[i], mulFn);
+        
+        Append(~invariants, <grank, drank, dspec, du>);
+    end for;
+    
+    printf "\nGrouping into classes...\n";
+    classes := [];
+    used := [false : i in [1..#functions]];
+    
+    for i := 1 to #functions do
+        if used[i] then continue; end if;
+        
+        class := [i];
+        used[i] := true;
+        
+        for j := i+1 to #functions do
+            if used[j] then continue; end if;
+            
+            if invariants[i][1] eq invariants[j][1] and invariants[i][4] eq invariants[j][4] then
+                if q le 4 then
+                    try
+                        if IsCCZEquivalent(polys[i], polys[j]) then
+                            Append(~class, j);
+                            used[j] := true;
+                        end if;
+                    catch e
+                        continue;
+                    end try;
+                else
+                    if invariants[i][3] eq invariants[j][3] then
+                        Append(~class, j);
+                        used[j] := true;
+                    end if;
+                end if;
+            end if;
+        end for;
+        
+        Append(~classes, class);
+    end for;
+    
+    printf "Found: %o CCZ-equivalence classes\n\n", #classes;
+    
+    printf "Writing: %o\n", outfile;
+    SetOutputFile(outfile);
+    
+    printf "# CCZ-Equivalence Results\n";
+    printf "# Field: F_%o (q=%o, n=%o)\n", q^2, q, n;
+    printf "# Total functions: %o\n", #functions;
+    printf "# CCZ-classes: %o\n\n", #classes;
+    
+    for c := 1 to #classes do
+        rep := classes[c][1];
+        printf "========================================================================\n";
+        printf "CLASS %o: %o functions\n", c, #classes[c];
+        printf "========================================================================\n";
+        printf "Representative (function #%o):\n", rep;
+        printf "  A=%o, B=%o, C=%o, D=%o, E=%o\n", 
+            functions[rep][1], functions[rep][2], functions[rep][3], 
+            functions[rep][4], functions[rep][5];
+        printf "CCZ-Invariants:\n";
+        printf "  Gamma-rank: %o\n", invariants[rep][1];
+        if invariants[rep][2] ne -1 then
+            printf "  Delta-rank: %o\n", invariants[rep][2];
+        end if;
+        printf "  Differential uniformity: %o\n", invariants[rep][4];
+        printf "Class members (indices): %o\n\n", classes[c];
+    end for;
+    
+    UnsetOutputFile();
+    printf "Done: %o\n\n", outfile;
+end procedure;
+
+// ============================================================================
+// MAIN
+// ============================================================================
+
+printf "\n";
+printf "################################################################################\n";
+printf "#  STANDALONE CCZ-EQUIVALENCE TESTING FOR APN HEXANOMIALS                     #\n";
+printf "################################################################################\n";
+
+ClassifyField(1, "apn_hexanomials_F4.txt", "ccz_results_F4.txt");
+ClassifyField(2, "apn_hexanomials_F16.txt", "ccz_results_F16.txt");
+ClassifyField(3, "apn_hexanomials_F64.txt", "ccz_results_F64.txt");
+ClassifyField(4, "apn_hexanomials_F256.txt", "ccz_results_F256.txt");
+
+printf "\n################################################################################\n";
+printf "#  ALL CLASSIFICATIONS COMPLETE                                                #\n";
+printf "################################################################################\n\n";
+
+quit;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
